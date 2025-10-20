@@ -1,5 +1,8 @@
 name: ci
-on: [push, pull_request]
+on: 
+  pull:
+  push:
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,4 +23,4 @@ jobs:
       - run: pip3 install -r requirements.txt
 
       - name: install python
-        run: apt-get install python3.9      
+        run: apt-get install python3.9
