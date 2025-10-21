@@ -20,6 +20,7 @@ jobs:
             software-properties-common \
             git \
             && sudo rm -rf /var/lib/apt/lists/*
+
       - name: Install Python Lib
         run: pip3 install -r requirements.txt
 
@@ -27,8 +28,10 @@ jobs:
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_SERVER }}
-          username: ${{ secrets.SSH_SERVER }}
+          username: ${{ secrets.SSH_USER }}
           password: ${{ secrets.SSH_PASS }}
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_KEY }}
-          script: docker ps
+          script: |
+            cd /VPS_v2/Projets/Epidentiel
+            git pull https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} HEAD:${{ github.ref_name }}
