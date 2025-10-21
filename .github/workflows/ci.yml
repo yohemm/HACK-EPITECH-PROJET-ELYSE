@@ -1,6 +1,6 @@
 name: ci
 on: 
-  pull:
+  pull_request: 
   push:
   workflow_dispatch:
 jobs:
