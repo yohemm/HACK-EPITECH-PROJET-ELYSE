@@ -13,9 +13,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# CSS custom
-with open('assets/custom.css') as f:
-    st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+# CSS custom (optionnel)
+import os
+css_path = 'assets/custom.css'
+if os.path.exists(css_path):
+    with open(css_path) as f:
+        st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
 
 # Titre
 st.title("🗺️ EpiMap Explorer - Analyse des Risques Épidémiologiques")
