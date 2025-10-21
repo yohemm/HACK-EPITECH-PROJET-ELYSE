@@ -34,4 +34,4 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             cd /VPS_v2/Projets/Epidentiel
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} HEAD:${{ github.ref_name }}
+            git pull https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} HEAD:${{ github.ref_name }}
