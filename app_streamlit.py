@@ -1,159 +1,305 @@
-
 import os
-import json
+from typing import Dict, Tuple, Optional
+
 import pandas as pd
 import streamlit as st
 import folium
-from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
 
-st.set_page_config(page_title="Carte Vaccination Grippe – MVP", layout="wide")
 
-REGIONAL_CSV = "iqvia_regional_2024.csv"
-NATIONAL_CSV = "iqvia_campagne_2024.csv"
-REGIONS_GEOJSON = "regions.geojson"
+# ----------------------------
+# App config
+# ----------------------------
+st.set_page_config(page_title="Accès aux soins - Carte vaccinale", layout="wide")
 
-@st.cache_data
-def load_data():
-    regional = pd.read_csv(REGIONAL_CSV)
-    national = pd.read_csv(NATIONAL_CSV)
-    # Normalize columns
-    regional.columns = [c.strip() for c in regional.columns]
-    national.columns = [c.strip() for c in national.columns]
-    # Ensure code is string with 2 digits for regions
-    if "code" in regional.columns:
-        regional["code"] = regional["code"].astype(str).str.zfill(2)
-    # Numeric coercion
-    for col in ["ACTE(VGP)", "DOSES(J07E1)", "ratio_actes_sur_doses"]:
-        if col in regional.columns:
-            regional[col] = pd.to_numeric(regional[col], errors="coerce")
-    return regional, national
 
-regional, national = load_data()
+# ----------------------------
+# Data loading / preparation
+# ----------------------------
+def _default_csv_path() -> Optional[str]:
+	"""Return a default CSV path present in the workspace, or None."""
+	candidates = [
+		"Couverture 2021-2024.csv"
+	]
+	for c in candidates:
+		if os.path.exists(c):
+			return c
+	return None
 
-# ---------- UI Sidebar ----------
-st.sidebar.header("Filtres")
-metric = st.sidebar.selectbox(
-    "Couche principale",
-    [c for c in ["ACTE(VGP)", "DOSES(J07E1)", "ratio_actes_sur_doses"] if c in regional.columns]
+
+def load_data(file) -> pd.DataFrame:
+	"""Load CSV into a dataframe with expected columns.
+
+	Expected columns: region, code, variable, groupe, valeur
+	variable in {"ACTE(VGP)", "DOSES(J07E1)"}
+	groupe in {"65 ans et plus", "moins de 65 ans"}
+	
+	c'est quoi le besoin
+	la cible
+	c'est quoi la suite
+	Juste vraie et juste 
+	tout le monde debout lors de la presentation
+	
+	"""
+	df = pd.read_csv(file)
+	# Clean column names if needed
+	df.columns = [c.strip().lower() for c in df.columns]
+	# Standardize expected column names
+	rename_map = {
+		"région": "region",
+		"code région": "code",
+		"valeur ": "valeur",
+	}
+	df = df.rename(columns=rename_map)
+
+	# Ensure numeric type for values
+	if "valeur" in df.columns:
+		df["valeur"] = pd.to_numeric(df["valeur"], errors="coerce")
+
+	# Strip spaces/casing for consistency
+	for col in ["region", "variable", "groupe"]:
+		if col in df.columns:
+			df[col] = df[col].astype(str).str.strip()
+
+	# Keep only necessary columns if extras exist
+	expected = ["region", "code", "variable", "groupe", "valeur"]
+	df = df[[c for c in expected if c in df.columns]]
+	return df
+
+
+def prepare_metrics(df: pd.DataFrame) -> pd.DataFrame:
+	"""Pivot data to compute uptake ratios and deficits by age group.
+
+	Returns a dataframe indexed by (region, code) with columns:
+	- acte_65p, doses_65p, ratio_65p, deficit_65p
+	- acte_m65, doses_m65, ratio_m65, deficit_m65
+	"""
+	if df.empty:
+		return df
+
+	pivot = (
+		df.pivot_table(
+			index=["region", "code"],
+			columns=["variable", "groupe"],
+			values="valeur",
+			aggfunc="sum",
+		)
+		.fillna(0)
+	)
+
+	# Helper to fetch safely
+	def get_col(var: str, grp: str) -> pd.Series:
+		if (var, grp) in pivot.columns:
+			return pivot[(var, grp)].astype(float)
+		return pd.Series(0.0, index=pivot.index)
+
+	acte_65 = get_col("ACTE(VGP)", "65 ans et plus")
+	doses_65 = get_col("DOSES(J07E1)", "65 ans et plus")
+	acte_m65 = get_col("ACTE(VGP)", "moins de 65 ans")
+	doses_m65 = get_col("DOSES(J07E1)", "moins de 65 ans")
+
+	# Compute ratios (acts/doses); if doses==0 -> NaN to avoid misleading 0
+	ratio_65 = acte_65.div(doses_65).where(doses_65 > 0)
+	ratio_m65 = acte_m65.div(doses_m65).where(doses_m65 > 0)
+
+	out = pd.DataFrame(
+		{
+			"acte_65p": acte_65,
+			"doses_65p": doses_65,
+			"ratio_65p": ratio_65,
+			"deficit_65p": 1 - ratio_65,
+			"acte_m65": acte_m65,
+			"doses_m65": doses_m65,
+			"ratio_m65": ratio_m65,
+			"deficit_m65": 1 - ratio_m65,
+		}
+	)
+	out.index = out.index.set_names(["region", "code"])
+	return out.reset_index()
+
+
+# ----------------------------
+# Geocoding for French regions (centroids, approximate)
+# ----------------------------
+REGION_CENTROIDS: Dict[str, Tuple[float, float]] = {
+	# code -> (lat, lon)
+	"11": (48.8566, 2.3522),  # Île-de-France (Paris)
+	"24": (47.7516, 1.6751),  # Centre-Val de Loire
+	"27": (47.2805, 5.9990),  # Bourgogne-Franche-Comté
+	"28": (49.1829, 0.3707),  # Normandie (Caen)
+	"32": (50.4800, 2.7930),  # Hauts-de-France
+	"44": (48.6990, 6.1870),  # Grand Est (Metz)
+	"52": (47.2184, -1.5536), # Pays de la Loire (Nantes)
+	"53": (48.1173, -1.6778), # Bretagne (Rennes)
+	"75": (44.8378, -0.5792), # Nouvelle-Aquitaine (Bordeaux)
+	"76": (43.6045, 1.4442),  # Occitanie (Toulouse)
+	"84": (45.7640, 4.8357),  # Auvergne-Rhône-Alpes (Lyon)
+	"93": (43.2965, 5.3698),  # Provence-Alpes-Côte d'Azur (Marseille)
+	"94": (41.9192, 8.7386),  # Corse (Ajaccio)
+	# Overseas (optional)
+	"01": (16.2650, -61.5510),  # Guadeloupe
+	"02": (14.6415, -61.0242),  # Martinique
+	"03": (4.9224, -52.3135),   # Guyane
+	"04": (-21.1151, 55.5364),  # La Réunion
+	"06": (-12.8275, 45.1662),  # Mayotte
+}
+
+
+def latlon_for_code(code: str) -> Optional[Tuple[float, float]]:
+	return REGION_CENTROIDS.get(str(code))
+
+
+# ----------------------------
+# UI + Map
+# ----------------------------
+st.title("Accès aux soins – Repérage des zones à faible uptake vaccinal")
+st.caption(
+	"Objectif: Identifier les régions où l'uptake (actes/doses) est faible pour orienter des actions ciblées."
 )
 
-st.sidebar.markdown("---")
-st.sidebar.caption("Astuce : ajoutez un fichier **regions.geojson** (codes INSEE région à 2 chiffres) "
-                   "pour activer la choroplèthe. Sinon, un fallback aux centroïdes s'applique.")
+with st.sidebar:
+	st.header("Données")
+	uploader = st.file_uploader(
+		"Importer un CSV (colonnes: region, code, variable, groupe, valeur)", type=["csv"]
+	)
 
-# ---------- Header ----------
-st.title("Optimisation de la stratégie vaccinale – Carte interactive (MVP)")
-col1, col2 = st.columns([2,1], gap="large")
+	default_path = _default_csv_path()
+	if default_path:
+		st.markdown(f"Fichier par défaut détecté: `{default_path}`")
 
-with col2:
-    st.subheader("Synthèse nationale")
-    # Show latest national snapshot table
-    if not national.empty:
-        latest_date = pd.to_datetime(national["date"], errors="coerce").max()
-        st.write(f"**Dernière date** : {latest_date.date() if pd.notna(latest_date) else 'n/a'}")
-        key_vars = national[national["date"] == latest_date.strftime("%Y-%m-%d") if pd.notna(latest_date) else True]
-        # Small pivot to display ACTE/DOSES/cibles si existants
-        if {"variable","valeur"}.issubset(key_vars.columns):
-            pv = key_vars.pivot_table(index="variable", values="valeur", aggfunc="sum")
-            st.dataframe(pv)
-        else:
-            st.dataframe(national.head(20))
+	st.divider()
+	st.header("Paramètres")
+	age_group = st.selectbox(
+		"Groupe d'âge",
+		options=["65 ans et plus", "moins de 65 ans"],
+		index=0,
+	)
+	threshold = st.slider(
+		"Seuil d'alerte uptake (actes/doses)", min_value=0.0, max_value=1.0, value=0.70, step=0.05
+	)
+	st.caption(
+		"Régions avec uptake < seuil seront marquées en rouge (priorité). Orange si proche du seuil."
+	)
 
-# ---------- Map init ----------
-with col1:
-    st.subheader("Carte")
-    m = folium.Map(location=[46.6, 2.4], zoom_start=6, control_scale=True)
 
-    # Try to draw choropleth if geojson exists
-    geo_ok = os.path.exists(REGIONS_GEOJSON)
-    if geo_ok:
-        with open(REGIONS_GEOJSON, "r", encoding="utf-8") as f:
-            geo = json.load(f)
+# Load data from upload or default
+if uploader is not None:
+	df_raw = load_data(uploader)
+elif default_path is not None:
+	df_raw = load_data(default_path)
+else:
+	df_raw = pd.DataFrame(columns=["region", "code", "variable", "groupe", "valeur"])  # empty
 
-        # Build mapping data frame (value per region code)
-        data = regional[["code", metric]].copy()
-        data = data.dropna(subset=[metric])
 
-        folium.Choropleth(
-            geo_data=geo,
-            name="Choroplèthe",
-            data=data,
-            columns=["code", metric],
-            key_on="feature.properties.code",
-            fill_opacity=0.8,
-            line_opacity=0.3,
-            legend_name=metric
-        ).add_to(m)
+if df_raw.empty:
+	st.warning(
+		"Aucun fichier CSV trouvé. Importez un fichier via la barre latérale pour commencer."
+	)
+	st.stop()
 
-        # Optional popups using region names from the CSV if present
-        # We'll use simple markers at approximate centroids if present in geo
-        try:
-            for feat in geo.get("features", []):
-                props = feat.get("properties", {})
-                code = str(props.get("code", "")).zfill(2)
-                name = props.get("nom", props.get("name", code))
-                row = regional.loc[regional["code"] == code]
-                val = row[metric].values[0] if not row.empty else None
-                # Try centroid from geometry if available (not guaranteed)
-                # Fallback to the map center
-                center = [46.6, 2.4]
-                # Popup
-                folium.Marker(
-                    location=center,
-                    tooltip=f"{name} – {metric}: {val:,.0f}" if val is not None else f"{name}",
-                    popup=folium.Popup(f"<b>{name}</b><br>{metric}: {val:,.0f}" if val is not None else f"<b>{name}</b>",
-                                       max_width=300)
-                ).add_to(m)
-        except Exception:
-            pass
 
-    else:
-        # Fallback to centroids for regions (2024 codes; approximate)
-        REGION_CENTROIDS = {
-            "01": (49.8942, 2.2958),   # Hauts-de-France (approx Amiens)
-            "02": (48.6921, 6.1844),   # Grand Est (approx Nancy)
-            "03": (47.3220, 5.0415),   # Bourgogne-Franche-Comté (approx Dijon)
-            "04": (45.7640, 4.8357),   # Auvergne-Rhône-Alpes (Lyon)
-            "06": (44.8378, -0.5792),  # Nouvelle-Aquitaine (Bordeaux)
-            "11": (48.8566, 2.3522),   # Île-de-France (Paris)
-            "24": (47.9029, 1.9093),   # Centre-Val de Loire (Orléans)
-            "27": (48.1173, -1.6778),  # Bretagne (Rennes)
-            "28": (48.5734, 7.7521),   # Normandie (approx Rouen/Caen ~ mid)
-            "32": (47.2184, -1.5536),  # Pays de la Loire (Nantes)
-            "44": (47.2184, -1.5536),  # (legacy) Pays de la Loire
-            "52": (47.2184, -1.5536),  # (legacy) Bretagne/Pays de la Loire approx
-            "53": (47.2184, -1.5536),  # (legacy) Normandie/PdL approx
-            "75": (43.2965, 5.3698),   # Provence-Alpes-Côte d'Azur (Marseille)
-            "76": (43.6047, 1.4442),   # Occitanie (Toulouse)
-            "84": (45.7640, 4.8357),   # Auvergne-Rhône-Alpes
-            "93": (43.2965, 5.3698),   # Provence-Alpes-Côte d'Azur
-            "94": (43.2329, -0.0733),  # Corse (approx Corte/Ajaccio midpoint)
-        }
+df_metrics = prepare_metrics(df_raw)
 
-        # Merge centroids
-        df = regional.copy()
-        df["lat"] = df["code"].map(lambda c: REGION_CENTROIDS.get(str(c).zfill(2), (46.6, 2.4))[0])
-        df["lon"] = df["code"].map(lambda c: REGION_CENTROIDS.get(str(c).zfill(2), (46.6, 2.4))[1])
+# Choose columns by age group
+if age_group == "65 ans et plus":
+	ratio_col, deficit_col, a_col, d_col = "ratio_65p", "deficit_65p", "acte_65p", "doses_65p"
+else:
+	ratio_col, deficit_col, a_col, d_col = "ratio_m65", "deficit_m65", "acte_m65", "doses_m65"
 
-        mc = MarkerCluster().add_to(m)
-        for _, r in df.iterrows():
-            val = r.get(metric, None)
-            tooltip = f"{r.get('region', r['code'])} – {metric}: {val:,.0f}" if pd.notna(val) else f"{r.get('region', r['code'])}"
-            popup_html = f"""
-                <b>{r.get('region', r['code'])}</b><br>
-                {metric}: {val:,.0f} <br>
-            """
-            folium.CircleMarker(
-                location=[r["lat"], r["lon"]],
-                radius=8 if pd.isna(val) else max(4, min(20, (float(val) ** 0.5) / 25)),
-                fill=True,
-                tooltip=tooltip,
-                popup=folium.Popup(popup_html, max_width=300)
-            ).add_to(mc)
 
-    # Render map
-    st_map = st_folium(m, width=1000, height=700)
+# Summary KPIs
+valid = df_metrics[ratio_col].notna()
+nb_regions = int(valid.sum())
+nb_flagged = int((df_metrics[ratio_col] < threshold).sum())
+avg_ratio = df_metrics.loc[valid, ratio_col].mean() if nb_regions else float("nan")
 
-st.markdown("---")
-st.caption("MVP – ajoutez IAS®, urgences et SOS Médecins pour le scoring de priorité.")
+col1, col2, col3 = st.columns(3)
+col1.metric("Régions (avec données)", nb_regions)
+col2.metric("Régions sous le seuil", nb_flagged)
+col3.metric("Uptake moyen", f"{avg_ratio:.2f}" if pd.notna(avg_ratio) else "–")
+
+
+# Top regions with highest deficit (largest 1 - ratio)
+top_n = (
+	df_metrics[["region", "code", ratio_col, deficit_col, a_col, d_col]]
+	.sort_values(by=ratio_col, ascending=True)
+	.head(5)
+)
+with st.expander("Top 5 régions à surveiller (uptake le plus faible)"):
+	st.dataframe(
+		top_n.rename(
+			columns={
+				ratio_col: "uptake",
+				deficit_col: "déficit",
+				a_col: "actes",
+				d_col: "doses",
+			}
+		),
+		use_container_width=True,
+	)
+
+
+# Map rendering
+center = [46.6, 2.5]
+zoom_start = 5
+fmap = folium.Map(location=center, zoom_start=zoom_start, tiles="cartodbpositron")
+
+for _, row in df_metrics.iterrows():
+	ratio = row.get(ratio_col)
+	if pd.isna(ratio):
+		continue
+
+	code = str(row.get("code"))
+	latlon = latlon_for_code(code)
+	if not latlon:
+		continue  # skip if we don't know the centroid
+
+	# Color logic
+	if ratio < threshold:
+		color = "#d73027"  # red
+	elif ratio < threshold + 0.1:
+		color = "#fc8d59"  # orange
+	else:
+		color = "#1a9850"  # green
+
+	radius = max(6.0, 6 + 25 * (1 - min(1.0, max(0.0, float(ratio)))))
+
+	popup_html = f"""
+		<b>{row['region']}</b> (code {code})<br/>
+		Uptake ({age_group}): <b>{ratio:.2f}</b><br/>
+		Actes: {int(row.get(a_col, 0)):,} | Doses: {int(row.get(d_col, 0)):,}
+	"""
+	folium.CircleMarker(
+		location=latlon,
+		radius=radius,
+		color=color,
+		fill=True,
+		fill_opacity=0.7,
+		popup=folium.Popup(popup_html, max_width=300),
+	).add_to(fmap)
+
+
+# Legend (custom HTML)
+legend_html = f"""
+ <div style="position: fixed; bottom: 30px; left: 30px; z-index: 9999; background: white; padding: 10px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px;">
+   <div style="font-weight:600; margin-bottom:6px;">Légende – Uptake (actes/doses)</div>
+   <div><span style="display:inline-block;width:12px;height:12px;background:#d73027;margin-right:6px;"></span>< {threshold:.2f} (priorité)</div>
+   <div><span style="display:inline-block;width:12px;height:12px;background:#fc8d59;margin-right:6px;"></span>{threshold:.2f} – {min(1.0, threshold+0.1):.2f}</div>
+   <div><span style="display:inline-block;width:12px;height:12px;background:#1a9850;margin-right:6px;"></span>≥ {min(1.0, threshold+0.1):.2f}</div>
+   <div style="margin-top:6px;color:#666;">Taille ∝ déficit (1 - uptake)</div>
+ </div>
+"""
+
+fmap.get_root().html.add_child(folium.Element(legend_html))
+
+st_data = st_folium(fmap, width=None, height=600)
+
+
+st.markdown(
+	"""
+	Notes et hypothèses:
+	- Sans dénominateur population (par ex. nombre de personnes 65+), on utilise ici un proxy d'uptake = actes/doses.
+	- Pour une analyse de couverture réelle, combinez avec les jeux 'Couvertures vaccinales' (ODiSSE) et les populations INSEE.
+	- Vous pouvez remplacer le CSV via l'upload pour intégrer des données plus complètes (département, région, national).
+	"""
+)
