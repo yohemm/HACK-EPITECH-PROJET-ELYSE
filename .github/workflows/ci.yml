@@ -22,12 +22,15 @@ jobs:
             && sudo rm -rf /var/lib/apt/lists/*
       - name: Install Python Lib
         run: pip3 install -r requirements.txt
-
+      - name:
+        run: |
+          echo "${{ secrets.SSH_SERVER }}"
+          echo "${{ secrets.SSH_SERVER }}"
       - name: Execute remote SSH commands using password
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_SERVER }}
-          username: ${{ secrets.SSH_SERVER }}
+          username: ${{ secrets.SSH_USER }}
           password: ${{ secrets.SSH_PASS }}
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_KEY }}
