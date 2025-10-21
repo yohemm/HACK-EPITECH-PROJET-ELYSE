@@ -20,4 +20,15 @@ jobs:
             software-properties-common \
             git \
             && sudo rm -rf /var/lib/apt/lists/*
-      - run: pip3 install -r requirements.txt
+      - name: Install Python Lib
+        run: pip3 install -r requirements.txt
+
+      - name: Execute remote SSH commands using password
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_SERVER }}
+          username: ${{ secrets.SSH_SERVER }}
+          password: ${{ secrets.SSH_PASS }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_KEY }}
+          script: docker ps
