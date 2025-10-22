@@ -1,8 +1,22 @@
+# Python
 __pycache__/
-__init__.py
+*.py[cod]
+*$py.class
+*.so
+.Python
 *.pyc
-.DS_Store
-.vscode/
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
 env/
 venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables
 .env

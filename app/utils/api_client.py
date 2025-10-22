@@ -18,12 +18,19 @@ class APIClient:
     @st.cache_data(ttl=3600)
     def fetch_coverage_vaccinale() -> pd.DataFrame:
         """
-        Récupère couverture vaccinale départementale
+        Récupère couverture vaccinale régionale depuis CSV local
         
         Returns:
-            DataFrame avec code, date, coverage_rate
+            DataFrame avec code, date, coverage_rate, actes, doses
         """
         try:
+            # Essayer de charger le CSV local
+            import os
+            csv_path = 'Couverture 2021-2024.csv'
+            if os.path.exists(csv_path):
+                return APIClient._load_coverage_from_csv(csv_path)
+            
+            # Sinon, essayer l'API
             response = requests.get(
                 API_URLS['coverage'],
                 params={'rows': 10000},
@@ -35,7 +42,6 @@ class APIClient:
             records = [r['fields'] for r in data['records']]
             
             df = pd.DataFrame(records)
-            # Adaptation selon structure réelle API
             df = df.rename(columns={
                 'dept': 'code',
                 'annee': 'date',
@@ -45,27 +51,78 @@ class APIClient:
             return df[['code', 'date', 'coverage_rate']]
         
         except Exception as e:
-            # Fallback: données mock pour POC
-            st.warning(f"API couverture indisponible, utilisation données mock: {e}")
+            st.warning(f"API couverture indisponible, utilisation donnees mock: {e}")
             return APIClient._mock_coverage_data()
     
     
     @staticmethod
-    def _mock_coverage_data() -> pd.DataFrame:
-        """Données mock couverture pour tests"""
-        import numpy as np
+    def _load_coverage_from_csv(csv_path: str) -> pd.DataFrame:
+        """
+        Charge et transforme le CSV de couverture vaccinale
         
-        codes = ['75', '13', '69', '31', '06', '44', '33', '59', '67', '34',
-                 '92', '93', '94', '78', '77', '91', '35', '38', '62', '76']
-        dates = pd.date_range('2024-01-01', '2024-10-01', freq='W')
+        Structure CSV: region, code, variable, groupe, valeur, annee
+        - variable: ACTE(VGP) ou DOSES(J07E1)
+        - groupe: "65 ans et plus" ou "moins de 65 ans"
+        
+        Returns:
+            DataFrame avec code, date, coverage_rate
+        """
+        df = pd.read_csv(csv_path)
+        
+        # Convertir 'code' en string dès le départ pour éviter les problèmes de merge
+        df['code'] = df['code'].astype(str)
+        
+        # Pivoter pour avoir ACTE et DOSES en colonnes
+        df_pivot = df.pivot_table(
+            index=['code', 'annee', 'groupe'],
+            columns='variable',
+            values='valeur',
+            aggfunc='sum'
+        ).reset_index()
+        
+        # Calculer taux de couverture = ACTE / DOSES * 100 (pour milliers)
+        # Les valeurs sont en "pour 1000 personnes", donc on multiplie par 100 pour avoir un %
+        df_pivot['coverage_rate'] = (df_pivot['ACTE(VGP)'] / df_pivot['DOSES(J07E1)']) * 100
+        
+        # Renommer colonnes
+        df_pivot = df_pivot.rename(columns={'annee': 'date'})
+        
+        # Convertir date en format YYYY-MM-DD (utiliser 01-01 par défaut)
+        df_pivot['date'] = df_pivot['date'].astype(str) + '-01-01'
+        
+        # Garder colonnes utiles
+        result = df_pivot[['code', 'date', 'coverage_rate', 'groupe']].copy()
+        
+        # Calculer moyenne pondérée si plusieurs groupes
+        result_agg = result.groupby(['code', 'date'], as_index=False).agg({
+            'coverage_rate': 'mean'
+        })
+        
+        # S'assurer que 'code' est bien une string
+        result_agg['code'] = result_agg['code'].astype(str)
+        
+        return result_agg
+    
+    
+    @staticmethod
+    def _mock_coverage_data() -> pd.DataFrame:
+        """Donnees mock couverture pour tests (basees sur moyennes CSV)"""
+        codes = ['11', '24', '27', '28', '32', '44', '52', '53', '75', '76', '84', '93', '94']
+        dates = pd.date_range('2021-01-01', '2024-01-01', freq='YE')
+        
+        # Valeurs moyennes observées dans le CSV réel
+        coverage_by_region = {
+            '11': 72.3, '24': 63.6, '27': 56.6, '28': 65.7, '32': 51.8,
+            '44': 59.8, '52': 62.2, '53': 61.5, '75': 58.0, '76': 60.4,
+            '84': 57.0, '93': 57.1, '94': 34.4
+        }
         
         data = []
         for code in codes:
-            # Base coverage entre 40-80% avec variation
-            base_coverage = np.random.uniform(45, 75)
+            base_coverage = coverage_by_region.get(code, 60.0)
             for date in dates:
-                # Variation hebdomadaire
-                coverage = base_coverage + np.random.uniform(-5, 5)
+                # Variation annuelle légère
+                coverage = base_coverage + np.random.uniform(-3, 3)
                 data.append({
                     'code': code,
                     'date': date.strftime('%Y-%m-%d'),
@@ -112,65 +169,35 @@ class APIClient:
     
     
     @staticmethod
-    @st.cache_data(ttl=86400)  # 24h (données demo statiques)
+    @st.cache_data(ttl=86400)
     def fetch_demographie_insee() -> pd.DataFrame:
         """
-        Données démographiques INSEE
+        Données démographiques complètes pour toutes les régions
         
         Returns:
             DataFrame avec code, name, population, density, pct_65plus
         """
-        # Pour le POC, utiliser données statiques
-        # En production: API INSEE ou CSV officiel
-        return APIClient._mock_demo_data()
-    
-    
-    # ==================== MOCK DATA (POC) ====================
-    
-    @staticmethod
-    def _mock_urgences_data() -> pd.DataFrame:
-        """Données mock urgences pour tests"""
-        import numpy as np
-        
-        codes = ['75', '13', '69', '31', '06', '44', '33', '59', '67', '34']
-        dates = pd.date_range('2024-01-01', '2024-10-01', freq='W')
-        
-        data = []
-        for code in codes:
-            for date in dates:
-                data.append({
-                    'code': code,
-                    'date': date.strftime('%Y-%m-%d'),
-                    'urgences_count': np.random.randint(50, 500)
-                })
-        
-        return pd.DataFrame(data)
-    
-    
-    @staticmethod
-    def _mock_demo_data() -> pd.DataFrame:
-        """Données démographiques mock"""
         demo_data = {
-            '75': {'name': 'Paris', 'population': 2175601, 'density': 20754, 'pct_65plus': 14.5},
-            '13': {'name': 'Bouches-du-Rhône', 'population': 2043110, 'density': 393, 'pct_65plus': 18.2},
-            '69': {'name': 'Rhône', 'population': 1872808, 'density': 557, 'pct_65plus': 16.1},
-            '31': {'name': 'Haute-Garonne', 'population': 1415757, 'density': 223, 'pct_65plus': 15.3},
-            '06': {'name': 'Alpes-Maritimes', 'population': 1094283, 'density': 254, 'pct_65plus': 22.7},
-            '44': {'name': 'Loire-Atlantique', 'population': 1442686, 'density': 209, 'pct_65plus': 17.1},
-            '33': {'name': 'Gironde', 'population': 1647269, 'density': 165, 'pct_65plus': 18.5},
-            '59': {'name': 'Nord', 'population': 2608346, 'density': 459, 'pct_65plus': 16.8},
-            '67': {'name': 'Bas-Rhin', 'population': 1142258, 'density': 240, 'pct_65plus': 17.2},
-            '34': {'name': 'Hérault', 'population': 1175623, 'density': 191, 'pct_65plus': 19.3},
-            '92': {'name': 'Hauts-de-Seine', 'population': 1624357, 'density': 9188, 'pct_65plus': 15.2},
-            '93': {'name': 'Seine-Saint-Denis', 'population': 1644518, 'density': 6989, 'pct_65plus': 12.8},
-            '94': {'name': 'Val-de-Marne', 'population': 1410865, 'density': 5675, 'pct_65plus': 16.4},
-            '78': {'name': 'Yvelines', 'population': 1448207, 'density': 656, 'pct_65plus': 17.9},
-            '77': {'name': 'Seine-et-Marne', 'population': 1421197, 'density': 242, 'pct_65plus': 15.6},
-            '91': {'name': 'Essonne', 'population': 1321617, 'density': 733, 'pct_65plus': 15.1},
-            '35': {'name': 'Ille-et-Vilaine', 'population': 1096356, 'density': 163, 'pct_65plus': 16.7},
-            '38': {'name': 'Isère', 'population': 1271166, 'density': 161, 'pct_65plus': 17.4},
-            '62': {'name': 'Pas-de-Calais', 'population': 1472589, 'density': 220, 'pct_65plus': 18.1},
-            '76': {'name': 'Seine-Maritime', 'population': 1262808, 'density': 203, 'pct_65plus': 19.2},
+            # Régions métropolitaines
+            '11': {'name': 'Ile-de-France', 'population': 12278210, 'density': 1021, 'pct_65plus': 15.8},
+            '24': {'name': 'Centre-Val de Loire', 'population': 2559073, 'density': 66, 'pct_65plus': 20.9},
+            '27': {'name': 'Bourgogne-Franche-Comte', 'population': 2783039, 'density': 59, 'pct_65plus': 21.5},
+            '28': {'name': 'Normandie', 'population': 3325032, 'density': 111, 'pct_65plus': 20.7},
+            '32': {'name': 'Hauts-de-France', 'population': 5997734, 'density': 189, 'pct_65plus': 18.2},
+            '44': {'name': 'Grand Est', 'population': 5511747, 'density': 97, 'pct_65plus': 19.4},
+            '52': {'name': 'Pays de la Loire', 'population': 3832120, 'density': 119, 'pct_65plus': 19.2},
+            '53': {'name': 'Bretagne', 'population': 3373835, 'density': 124, 'pct_65plus': 20.4},
+            '75': {'name': 'Nouvelle-Aquitaine', 'population': 6033952, 'density': 72, 'pct_65plus': 21.8},
+            '76': {'name': 'Occitanie', 'population': 5973969, 'density': 83, 'pct_65plus': 20.5},
+            '84': {'name': 'Auvergne-Rhone-Alpes', 'population': 8078652, 'density': 116, 'pct_65plus': 19.1},
+            '93': {'name': 'Provence-Alpes-Cote d\'Azur', 'population': 5081101, 'density': 161, 'pct_65plus': 20.8},
+            '94': {'name': 'Corse', 'population': 343701, 'density': 40, 'pct_65plus': 23.7},
+            # DOM (estimations)
+            '01': {'name': 'Guadeloupe', 'population': 384239, 'density': 236, 'pct_65plus': 18.5},
+            '02': {'name': 'Martinique', 'population': 364508, 'density': 326, 'pct_65plus': 22.1},
+            '03': {'name': 'Guyane', 'population': 290691, 'density': 3, 'pct_65plus': 9.2},
+            '04': {'name': 'La Reunion', 'population': 859959, 'density': 343, 'pct_65plus': 13.8},
+            '06': {'name': 'Mayotte', 'population': 279471, 'density': 743, 'pct_65plus': 4.2},
         }
         
         rows = []
@@ -184,3 +211,29 @@ class APIClient:
             })
         
         return pd.DataFrame(rows)
+    # ==================== MOCK DATA (POC) ====================
+    
+    @staticmethod
+    def _mock_urgences_data() -> pd.DataFrame:
+        """Donnees mock urgences pour tests"""
+        codes = ['11', '24', '27', '28', '32', '44', '52', '53', '75', '76', '84', '93', '94']
+        dates = pd.date_range('2021-01-01', '2024-01-01', freq='YE')
+        
+        # Proportionnel à la population
+        urgences_factor = {
+            '11': 1500, '24': 350, '27': 380, '28': 450, '32': 800,
+            '44': 750, '52': 520, '53': 460, '75': 820, '76': 810,
+            '84': 1100, '93': 690, '94': 50
+        }
+        
+        data = []
+        for code in codes:
+            base_urgences = urgences_factor.get(code, 500)
+            for date in dates:
+                data.append({
+                    'code': code,
+                    'date': date.strftime('%Y-%m-%d'),
+                    'urgences_count': int(base_urgences + np.random.randint(-100, 100))
+                })
+        
+        return pd.DataFrame(data)

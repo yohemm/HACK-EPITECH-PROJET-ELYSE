@@ -6,6 +6,9 @@ Focus : Scoring composite configurable + Simulation interactive
 import streamlit as st
 import pandas as pd
 from typing import Dict
+from core.risk_analyzer import RiskAnalyzer
+from components.map_view import display_risk_map
+from components.controls import render_controls
 
 from config import DEFAULT_SCORING_WEIGHTS, RISK_COLORS
 from core.risk_analyzer import RiskAnalyzer, TerritoryMetrics, RiskScore
@@ -28,6 +31,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+
+# Titre
+st.title("EpiMap Explorer - Analyse des Risques Épidémiologiques")
 
 # ==================== CSS CUSTOM ====================
 
@@ -102,7 +108,6 @@ if 'weights' not in st.session_state:
 if 'analyzer' not in st.session_state:
     st.session_state.analyzer = RiskAnalyzer(st.session_state.weights)
 
-
 # ==================== HEADER ====================
 
 st.markdown('<h1 class="main-title">🎯 EpiMap Explorer</h1>', unsafe_allow_html=True)
@@ -118,6 +123,25 @@ st.divider()
 
 with st.sidebar:
     st.title("⚙️ Configuration Globale")
+    # Afficher des années propres et option "Toutes"
+    # data['date'] = pd.to_datetime('2025-01-01')
+    # year_list = sorted(data['date'].dt.year.unique().tolist())
+    # year_options = ['Toutes'] + year_list if year_list else []
+    # selected_year = st.selectbox("Année", year_options, index=0 if year_options else None)
+    # selected_date = None if selected_year == 'Toutes' else pd.Timestamp(f"{selected_year}-01-01")
+    demo_dates = pd.DataFrame({
+      'date': pd.to_datetime(['2025-01-01', '2025-01-01', '2025-01-01'])
+    })
+
+    year_list = sorted(demo_dates['date'].dt.year.unique().tolist())
+    year_options = ['Toutes'] + year_list
+    selected_year = st.selectbox("Année", year_options, index=0)
+    selected_date = None if selected_year == 'Toutes' else pd.Timestamp(f"{selected_year}-01-01")
+
+    # selected_year = 'Toutes'
+    # selected_date = None
+    
+    show_simulation = st.checkbox("Activer mode simulation", value=False)
     
     # Section 1 : Poids du scoring
     with st.expander("⚖️ Poids du Scoring", expanded=False):
@@ -185,9 +209,25 @@ with tab1:
     st.header("📊 Scores de Risque par Territoire")
     
     # Statistiques globales
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4 = st.columns([3,1,1,1])
     
     with col1:
+        # Données carte: agrégation si "Toutes"
+        # if selected_year == 'Toutes':
+        #     df = analyzer._scores.copy()
+        #     agg = (df.groupby(['code', 'name'], as_index=False)
+        #              .agg(risk_score=('risk_score', 'mean'),
+        #                   coverage_rate=('coverage_rate', 'mean'),
+        #                   urgences_count=('urgences_count', 'mean')))
+        #     # Recalcul de la catégorie de risque sur la moyenne
+        #     agg['risk_level'] = pd.cut(
+        #         agg['risk_score'], bins=[0, 25, 50, 75, 100], labels=['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
+        #     )
+        #     scores_data = agg
+        # else:
+        #     scores_data = analyzer.get_all_scores(date=selected_date)
+        scores_data = scores_df
+        display_risk_map(scores_data, height=200)
         st.metric(
             "Score Moyen National",
             f"{scores_df['total_score'].mean():.1f}",
@@ -268,6 +308,45 @@ with tab1:
         title="Distribution des Scores de Risque",
         labels={'total_score': 'Score de Risque', 'count': 'Nombre de Territoires'},
         color_discrete_sequence=['#3498db']
+# =======
+    
+#     with col2:
+#         st.subheader("🚨 Top 5 Risques")
+#         if selected_year == 'Toutes':
+#             top = (scores_data.sort_values('risk_score', ascending=False)
+#                               .head(5)[['name', 'risk_score', 'risk_level']])
+#         else:
+#             top = analyzer.get_top_risks(5, selected_date)
+#         st.dataframe(top[['name', 'risk_score', 'risk_level']])
+        
+#         if show_simulation and selected_year != 'Toutes':
+#             st.subheader("🎛️ Simulation")
+#             selected_code = st.selectbox("Région", top['code'])
+#             new_coverage = st.slider("Nouvelle couverture (%)", 0, 100, 60)
+            
+#             sim = analyzer.simulate_coverage_change(
+#                 selected_code, 
+#                 new_coverage, 
+#                 selected_date
+#             )
+            
+#             st.metric(
+#                 "Score de risque",
+#                 sim['new_score'],
+#                 delta=sim['delta']
+#             )
+#         elif show_simulation and selected_year == 'Toutes':
+#             st.info("La simulation est disponible lorsqu'une année précise est sélectionnée.")
+
+# with tab2:
+#     st.subheader("📊 Comparateur de Territoires")
+#     code_options = analyzer._scores['code'].unique().tolist()
+#     default_codes = code_options[:2] if len(code_options) >= 2 else code_options
+#     codes = st.multiselect(
+#         "Sélectionner régions",
+#         code_options,
+#         default=default_codes
+# >>>>>>> origin/develop
     )
     
     fig.add_vline(x=25, line_dash="dash", line_color="green", annotation_text="LOW/MEDIUM")
