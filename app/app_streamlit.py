@@ -21,7 +21,7 @@ if os.path.exists(css_path):
         st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
 
 # Titre
-st.title("🗺️ EpiMap Explorer - Analyse des Risques Épidémiologiques")
+st.title("EpiMap Explorer - Analyse des Risques Épidémiologiques")
 
 # Init analyzer (cached)
 @st.cache_resource
@@ -45,7 +45,7 @@ with st.sidebar:
     show_simulation = st.checkbox("Activer mode simulation", value=False)
 
 # Layout principal
-tab1, tab2, tab3 = st.tabs(["🗺️ Carte", "📊 Comparateur", "📈 Timeline"])
+tab1, tab2, tab3 = st.tabs(["Carte", "Comparateur", "Timeline"])
 
 with tab1:
     col1, col2 = st.columns([3, 1])
@@ -61,7 +61,7 @@ with tab1:
         
         if show_simulation:
             st.subheader("🎛️ Simulation")
-            selected_code = st.selectbox("Département", top['code'])
+            selected_code = st.selectbox("Région", top['code'])
             new_coverage = st.slider("Nouvelle couverture (%)", 0, 100, 60)
             
             sim = analyzer.simulate_coverage_change(
@@ -79,9 +79,9 @@ with tab1:
 with tab2:
     st.subheader("📊 Comparateur de Territoires")
     codes = st.multiselect(
-        "Sélectionner départements",
+        "Sélectionner régions",
         analyzer._scores['code'].unique(),
-        default=['75', '13']
+        default=['11', '93']  # Ile-de-France et PACA
     )
     
     if codes:
@@ -90,7 +90,7 @@ with tab2:
 
 with tab3:
     st.subheader("📈 Évolution Temporelle")
-    code_timeline = st.selectbox("Département", analyzer._scores['code'].unique())
+    code_timeline = st.selectbox("Région", analyzer._scores['code'].unique())
     
     evolution = analyzer.get_evolution(code_timeline)
     st.line_chart(evolution.set_index('date')['risk_score'])

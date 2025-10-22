@@ -55,9 +55,17 @@ class RiskAnalyzer:
         df_urgences = _self.api_client.fetch_urgences()
         df_demo = _self.api_client.fetch_demographie_insee()
         
-        # Fusion sur (code, date)
-        data = pd.merge(df_coverage, df_urgences, on=['code', 'date'], how='outer')
+        # Extraire année pour merge (dates exactes différentes)
+        df_coverage['year'] = pd.to_datetime(df_coverage['date']).dt.year
+        df_urgences['year'] = pd.to_datetime(df_urgences['date']).dt.year
+        
+        # Fusion sur (code, year)
+        data = pd.merge(df_coverage, df_urgences, on=['code', 'year'], how='inner', suffixes=('', '_urg'))
         data = pd.merge(data, df_demo, on='code', how='left')
+        
+        # Nettoyer colonnes doublons
+        if 'date_urg' in data.columns:
+            data = data.drop(columns=['date_urg'])
         
         # Nettoyage
         data = data.dropna(subset=['coverage_rate', 'urgences_count'])
