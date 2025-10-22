@@ -59,16 +59,29 @@ class RiskAnalyzer:
         df_coverage['year'] = pd.to_datetime(df_coverage['date']).dt.year
         df_urgences['year'] = pd.to_datetime(df_urgences['date']).dt.year
         
-        # Fusion sur (code, year)
-        data = pd.merge(df_coverage, df_urgences, on=['code', 'year'], how='inner', suffixes=('', '_urg'))
+        # Fusion sur (code, year) en conservant toutes les années de couverture (inclut 2024)
+        data = pd.merge(
+            df_coverage,
+            df_urgences[['code', 'year', 'date', 'urgences_count']],
+            on=['code', 'year'],
+            how='left',
+            suffixes=('', '_urg')
+        )
         data = pd.merge(data, df_demo, on='code', how='left')
         
-        # Nettoyer colonnes doublons
+        # Colonnes doublons
         if 'date_urg' in data.columns:
             data = data.drop(columns=['date_urg'])
         
-        # Nettoyage
-        data = data.dropna(subset=['coverage_rate', 'urgences_count'])
+        # Imputation des urgences manquantes (ex: 2024) par report du dernier connu du territoire
+        data = data.sort_values(['code', 'year'])
+        data['urgences_count'] = data.groupby('code')['urgences_count'].ffill()
+        # Si toujours NaN (cas limite), remplacer par médiane globale
+        if data['urgences_count'].isna().any():
+            median_urg = data['urgences_count'].median()
+            data['urgences_count'] = data['urgences_count'].fillna(median_urg)
+        
+        # Types
         data['date'] = pd.to_datetime(data['date'])
         
         _self._data = data

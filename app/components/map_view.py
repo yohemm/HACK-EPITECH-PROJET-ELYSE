@@ -35,6 +35,23 @@ DEPT_COORDS = {
     '91': (48.6333, 2.4417),   # Essonne
 }
 
+# Coordonnées approximatives des régions (centroïdes simplifiés)
+REGION_COORDS = {
+    '11': (48.7, 2.3),   # Île-de-France
+    '24': (47.8, 1.6),   # Centre-Val de Loire
+    '27': (47.3, 4.5),   # Bourgogne-Franche-Comté
+    '28': (49.2, 0.0),   # Normandie
+    '32': (50.4, 2.7),   # Hauts-de-France
+    '44': (48.7, 6.2),   # Grand Est
+    '52': (47.5, -0.8),  # Pays de la Loire
+    '53': (48.2, -2.9),  # Bretagne
+    '75': (45.5, 0.0),   # Nouvelle-Aquitaine
+    '76': (43.9, 2.3),   # Occitanie
+    '84': (45.5, 4.5),   # Auvergne-Rhône-Alpes
+    '93': (43.9, 6.0),   # Provence-Alpes-Côte d'Azur
+    '94': (42.1, 9.0),   # Corse
+}
+
 
 def get_color_for_risk(risk_score: float, risk_level: str = None) -> str:
     """
@@ -96,8 +113,8 @@ def display_risk_map(scores_data: pd.DataFrame, height: int = 600) -> None:
     for _, row in scores_data.iterrows():
         code = str(row['code'])
         
-        # Récupérer coordonnées (skip si pas disponible)
-        coords = DEPT_COORDS.get(code)
+        # Récupérer coordonnées selon niveau dispo (département puis région)
+        coords = DEPT_COORDS.get(code) or REGION_COORDS.get(code)
         if coords is None:
             continue
         
