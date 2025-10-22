@@ -141,7 +141,7 @@ with st.sidebar:
     # selected_year = 'Toutes'
     # selected_date = None
     
-    show_simulation = st.checkbox("Activer mode simulation", value=False)
+    # show_simulation = st.checkbox("Activer mode simulation", value=False)
     
     # Section 1 : Poids du scoring
     with st.expander("⚖️ Poids du Scoring", expanded=False):
