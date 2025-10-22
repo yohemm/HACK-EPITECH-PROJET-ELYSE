@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
 
-from app.config import MAP_CONFIG
+from config import MAP_CONFIG
 
 
 # Coordonnées départements (centroides approximatifs - top 20)

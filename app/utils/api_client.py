@@ -8,7 +8,7 @@ import numpy as np
 from typing import Dict
 import streamlit as st
 
-from app.config import API_URLS
+from config import API_URLS
 
 
 class APIClient:
